@@ -55,7 +55,7 @@ pip install -r requirements.txt
 Make sure your virtual environment is active, then run:
 
 ```bash
-python connect_four.py
+python connect4.py
 ```
 
 > You'll need to activate the venv each time you open a new terminal session:
@@ -72,8 +72,8 @@ On launch, choose one of three modes:
 | Mode | Description |
 |---|---|
 | **2 Players** | Local two-player, take turns on the same machine |
-| **vs AI — Minimax** | Play against an AI using pure Minimax (no pruning) |
-| **vs AI — Minimax + Alpha-Beta** | Play against an AI using Minimax with Alpha-Beta Pruning |
+| **AI — Minimax** | Play against an AI using pure Minimax (no pruning) |
+| **AI — Minimax + Alpha-Beta** | Play against an AI using Minimax with Alpha-Beta Pruning |
 
 The two AI modes use the same heuristic and depth, making them useful for directly comparing efficiency.
 
@@ -102,7 +102,7 @@ Wins are tracked in the score bar across rounds.
 ## Project Structure
 
 ```
-connect_four.py      # Main game file — run this
+connect4.py      # Main game file — run this
 requirements.txt     # Python dependencies
 README.md            # This file
 ```
@@ -111,7 +111,7 @@ README.md            # This file
 
 ## Adjusting AI Difficulty
 
-In `connect_four.py`, find this line near the top:
+In `connect4.py`, find this line near the top:
 
 ```python
 AI_DEPTH = 5
