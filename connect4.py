@@ -26,12 +26,17 @@ SCORE_H       = 52
 WIDTH         = COLUMN_COUNT * SQUARESIZE
 HEIGHT        = HEADER_H + ROW_COUNT * SQUARESIZE + SCORE_H
 
-# ── Pieces ──────────────────────────────────────────────────────────────────────
+# ── Game constants ──────────────────────────────────────────────────────────────
 EMPTY         = 0
 PLAYER1       = 1
 PLAYER2       = 2
 WINDOW_LENGTH = 4
 AI_DEPTH      = 5
+
+# ── Modes ───────────────────────────────────────────────────────────────────────
+MODE_PVP      = "pvp"
+MODE_MINIMAX  = "minimax"
+MODE_AB       = "alphabeta"
 
 
 # ── Board helpers ───────────────────────────────────────────────────────────────
@@ -57,22 +62,18 @@ def get_valid_locations(board):
     return [c for c in range(COLUMN_COUNT) if is_valid(board, c)]
 
 def winning_move(board, piece):
-    # Horizontal
     for r in range(ROW_COUNT):
         for c in range(COLUMN_COUNT - 3):
             if all(board[r][c + i] == piece for i in range(4)):
                 return [(r, c + i) for i in range(4)]
-    # Vertical
     for c in range(COLUMN_COUNT):
         for r in range(ROW_COUNT - 3):
             if all(board[r + i][c] == piece for i in range(4)):
                 return [(r + i, c) for i in range(4)]
-    # Positive diagonal
     for r in range(ROW_COUNT - 3):
         for c in range(COLUMN_COUNT - 3):
             if all(board[r + i][c + i] == piece for i in range(4)):
                 return [(r + i, c + i) for i in range(4)]
-    # Negative diagonal
     for r in range(3, ROW_COUNT):
         for c in range(COLUMN_COUNT - 3):
             if all(board[r - i][c + i] == piece for i in range(4)):
@@ -80,14 +81,14 @@ def winning_move(board, piece):
     return None
 
 
-# ── AI / Minimax ────────────────────────────────────────────────────────────────
+# ── AI scoring ──────────────────────────────────────────────────────────────────
 
 def evaluate_window(window, piece):
-    score    = 0
-    opp      = PLAYER1 if piece == PLAYER2 else PLAYER2
-    count    = window.count(piece)
-    emp      = window.count(EMPTY)
-    opp_cnt  = window.count(opp)
+    score   = 0
+    opp     = PLAYER1 if piece == PLAYER2 else PLAYER2
+    count   = window.count(piece)
+    emp     = window.count(EMPTY)
+    opp_cnt = window.count(opp)
 
     if count == 4:
         score += 100
@@ -101,33 +102,26 @@ def evaluate_window(window, piece):
 
 def score_position(board, piece):
     score = 0
-    # Center column bonus
     center = [int(i) for i in list(board[:, COLUMN_COUNT // 2])]
     score += center.count(piece) * 3
 
-    # Horizontal
     for r in range(ROW_COUNT):
         row_arr = [int(i) for i in list(board[r, :])]
         for c in range(COLUMN_COUNT - 3):
             score += evaluate_window(row_arr[c:c + WINDOW_LENGTH], piece)
 
-    # Vertical
     for c in range(COLUMN_COUNT):
         col_arr = [int(i) for i in list(board[:, c])]
         for r in range(ROW_COUNT - 3):
             score += evaluate_window(col_arr[r:r + WINDOW_LENGTH], piece)
 
-    # Positive diagonal
     for r in range(ROW_COUNT - 3):
         for c in range(COLUMN_COUNT - 3):
-            window = [board[r + i][c + i] for i in range(WINDOW_LENGTH)]
-            score += evaluate_window(window, piece)
+            score += evaluate_window([board[r + i][c + i] for i in range(WINDOW_LENGTH)], piece)
 
-    # Negative diagonal
     for r in range(ROW_COUNT - 3):
         for c in range(COLUMN_COUNT - 3):
-            window = [board[r + 3 - i][c + i] for i in range(WINDOW_LENGTH)]
-            score += evaluate_window(window, piece)
+            score += evaluate_window([board[r + 3 - i][c + i] for i in range(WINDOW_LENGTH)], piece)
 
     return score
 
@@ -136,8 +130,11 @@ def is_terminal_node(board):
             winning_move(board, PLAYER2) or
             len(get_valid_locations(board)) == 0)
 
-def minimax(board, depth, alpha, beta, maximizing):
-    valid   = get_valid_locations(board)
+
+# ── Minimax (no pruning) ────────────────────────────────────────────────────────
+
+def minimax(board, depth, maximizing):
+    valid    = get_valid_locations(board)
     terminal = is_terminal_node(board)
 
     if depth == 0 or terminal:
@@ -157,7 +154,49 @@ def minimax(board, depth, alpha, beta, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER2)
-            new_score = minimax(b_copy, depth - 1, alpha, beta, False)[1]
+            new_score = minimax(b_copy, depth - 1, False)[1]
+            if new_score > value:
+                value  = new_score
+                column = col
+        return column, value
+    else:
+        value  = math.inf
+        column = random.choice(valid)
+        for col in valid:
+            row    = next_open_row(board, col)
+            b_copy = board.copy()
+            drop_piece(b_copy, row, col, PLAYER1)
+            new_score = minimax(b_copy, depth - 1, True)[1]
+            if new_score < value:
+                value  = new_score
+                column = col
+        return column, value
+
+
+# ── Minimax with alpha-beta pruning ─────────────────────────────────────────────
+
+def minimax_ab(board, depth, alpha, beta, maximizing):
+    valid    = get_valid_locations(board)
+    terminal = is_terminal_node(board)
+
+    if depth == 0 or terminal:
+        if terminal:
+            if winning_move(board, PLAYER2):
+                return (None,  100_000_000_000_000)
+            elif winning_move(board, PLAYER1):
+                return (None, -100_000_000_000_000)
+            else:
+                return (None, 0)
+        return (None, score_position(board, PLAYER2))
+
+    if maximizing:
+        value  = -math.inf
+        column = random.choice(valid)
+        for col in valid:
+            row    = next_open_row(board, col)
+            b_copy = board.copy()
+            drop_piece(b_copy, row, col, PLAYER2)
+            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, False)[1]
             if new_score > value:
                 value  = new_score
                 column = col
@@ -172,7 +211,7 @@ def minimax(board, depth, alpha, beta, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER1)
-            new_score = minimax(b_copy, depth - 1, alpha, beta, True)[1]
+            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, True)[1]
             if new_score < value:
                 value  = new_score
                 column = col
@@ -204,7 +243,7 @@ def draw_piece(surface, cx, cy, piece_color, shadow_color):
     pygame.draw.circle(surface, lighten(piece_color, 80),
                        (cx - RADIUS // 3, cy - RADIUS // 3), RADIUS // 4)
 
-def draw_score_bar(surface, scores, turn, ai_mode, font_sm):
+def draw_score_bar(surface, scores, turn, mode, font_sm):
     pygame.draw.rect(surface, DARK_GRAY, (0, 0, WIDTH, SCORE_H))
 
     p1_lbl = font_sm.render("Player 1", True, P1_COLOR)
@@ -212,7 +251,7 @@ def draw_score_bar(surface, scores, turn, ai_mode, font_sm):
     surface.blit(p1_lbl, (16, 6))
     surface.blit(p1_sc,  (16, 28))
 
-    p2_name = "AI" if ai_mode else "Player 2"
+    p2_name = "Player 2" if mode == MODE_PVP else "AI"
     p2_lbl  = font_sm.render(p2_name, True, P2_COLOR)
     p2_sc   = font_sm.render(str(scores[PLAYER2]), True, WHITE)
     surface.blit(p2_lbl, (WIDTH - p2_lbl.get_width() - 16, 6))
@@ -221,10 +260,10 @@ def draw_score_bar(surface, scores, turn, ai_mode, font_sm):
     if turn in (PLAYER1, PLAYER2):
         if turn == PLAYER1:
             color, name = P1_COLOR, "Player 1's Turn"
-        elif ai_mode:
-            color, name = P2_COLOR, "AI Thinking..."
-        else:
+        elif mode == MODE_PVP:
             color, name = P2_COLOR, "Player 2's Turn"
+        else:
+            color, name = P2_COLOR, "AI Thinking..."
         t_surf = font_sm.render(name, True, color)
         surface.blit(t_surf, (WIDTH // 2 - t_surf.get_width() // 2, 16))
 
@@ -259,20 +298,18 @@ def draw_hover(surface, col, turn):
         cy = SCORE_H + HEADER_H // 2
         draw_piece(surface, cx, cy, color, shadow)
 
-def draw_victory(surface, winner, ai_mode, font_big, font_sm):
+def draw_victory(surface, winner, mode, font_big, font_sm):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 190))
     surface.blit(overlay, (0, 0))
 
     if winner == PLAYER1:
-        color = P1_COLOR
-        text  = "Player 1 Wins!"
+        color, text = P1_COLOR, "Player 1 Wins!"
     elif winner == PLAYER2:
         color = P2_COLOR
-        text  = "AI Wins!" if ai_mode else "Player 2 Wins!"
+        text  = "AI Wins!" if mode != MODE_PVP else "Player 2 Wins!"
     else:
-        color = LIGHT_GRAY
-        text  = "It's a Draw!"
+        color, text = LIGHT_GRAY, "It's a Draw!"
 
     for offset in range(5, 0, -1):
         glow = font_big.render(text, True, darken(color, 160 - offset * 25))
@@ -291,30 +328,30 @@ def draw_menu(surface, font_big, font_sm):
     surface.fill(BG_COLOR)
 
     title = font_big.render("Connect Four", True, WHITE)
-    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 120))
+    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 100))
 
-    # Button rects
-    btn_w, btn_h = 320, 64
+    btn_w, btn_h = 360, 60
     btn_x = WIDTH // 2 - btn_w // 2
-    pvp_rect = pygame.Rect(btn_x, 280, btn_w, btn_h)
-    ai_rect  = pygame.Rect(btn_x, 370, btn_w, btn_h)
 
-    pygame.draw.rect(surface, BOARD_COLOR, pvp_rect, border_radius=10)
-    pygame.draw.rect(surface, BOARD_COLOR, ai_rect,  border_radius=10)
+    pvp_rect = pygame.Rect(btn_x, 250, btn_w, btn_h)
+    mm_rect  = pygame.Rect(btn_x, 330, btn_w, btn_h)
+    ab_rect  = pygame.Rect(btn_x, 410, btn_w, btn_h)
 
-    pvp_lbl = font_sm.render("2 Players", True, WHITE)
-    ai_lbl  = font_sm.render("vs AI", True, WHITE)
-
-    surface.blit(pvp_lbl, (pvp_rect.centerx - pvp_lbl.get_width() // 2,
-                            pvp_rect.centery - pvp_lbl.get_height() // 2))
-    surface.blit(ai_lbl,  (ai_rect.centerx  - ai_lbl.get_width()  // 2,
-                            ai_rect.centery  - ai_lbl.get_height() // 2))
+    for rect, label in [
+        (pvp_rect, "2 Players"),
+        (mm_rect,  "AI  —  Minimax"),
+        (ab_rect,  "AI - Minimax + Alpha-Beta"),
+    ]:
+        pygame.draw.rect(surface, BOARD_COLOR, rect, border_radius=10)
+        lbl = font_sm.render(label, True, WHITE)
+        surface.blit(lbl, (rect.centerx - lbl.get_width() // 2,
+                           rect.centery - lbl.get_height() // 2))
 
     hint = font_sm.render("Choose a mode to start", True, LIGHT_GRAY)
-    surface.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 480))
+    surface.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 500))
 
     pygame.display.flip()
-    return pvp_rect, ai_rect
+    return pvp_rect, mm_rect, ab_rect
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
@@ -329,10 +366,10 @@ def main():
     clock    = pygame.time.Clock()
 
     # ── Mode selection ──────────────────────────────────────────────────────────
-    ai_mode = None
-    pvp_rect, ai_rect = draw_menu(screen, font_big, font_sm)
+    mode = None
+    pvp_rect, mm_rect, ab_rect = draw_menu(screen, font_big, font_sm)
 
-    while ai_mode is None:
+    while mode is None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
@@ -340,9 +377,11 @@ def main():
                 pygame.quit(); sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if pvp_rect.collidepoint(event.pos):
-                    ai_mode = False
-                elif ai_rect.collidepoint(event.pos):
-                    ai_mode = True
+                    mode = MODE_PVP
+                elif mm_rect.collidepoint(event.pos):
+                    mode = MODE_MINIMAX
+                elif ab_rect.collidepoint(event.pos):
+                    mode = MODE_AB
 
     scores = {PLAYER1: 0, PLAYER2: 0}
 
@@ -355,8 +394,12 @@ def main():
         clock.tick(60)
 
         # ── AI move ─────────────────────────────────────────────────────────────
-        if ai_mode and turn == PLAYER2 and not game_over:
-            col, _ = minimax(board, AI_DEPTH, -math.inf, math.inf, True)
+        if mode != MODE_PVP and turn == PLAYER2 and not game_over:
+            if mode == MODE_MINIMAX:
+                col, _ = minimax(board, AI_DEPTH, True)
+            else:
+                col, _ = minimax_ab(board, AI_DEPTH, -math.inf, math.inf, True)
+
             if col is not None and is_valid(board, col):
                 row = next_open_row(board, col)
                 drop_piece(board, row, col, PLAYER2)
@@ -387,9 +430,7 @@ def main():
                     hover_col = int(event.pos[0] // SQUARESIZE)
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    # Only accept human input on PLAYER1's turn,
-                    # or either turn in 2-player mode
-                    if turn == PLAYER1 or (not ai_mode and turn == PLAYER2):
+                    if turn == PLAYER1 or (mode == MODE_PVP and turn == PLAYER2):
                         col = int(event.pos[0] // SQUARESIZE)
                         if is_valid(board, col):
                             row = next_open_row(board, col)
@@ -407,25 +448,19 @@ def main():
 
         # ── Render ──────────────────────────────────────────────────────────────
         screen.fill(BG_COLOR)
-        draw_score_bar(screen, scores, turn, ai_mode, font_sm)
+        draw_score_bar(screen, scores, turn, mode, font_sm)
 
-        if not game_over:
-            # Show hover only when it's a human's turn
-            if turn == PLAYER1 or (not ai_mode and turn == PLAYER2):
-                draw_hover(screen, hover_col, turn)
-            else:
-                pygame.draw.rect(screen, BG_COLOR, (0, SCORE_H, WIDTH, HEADER_H))
+        human_turn = turn == PLAYER1 or (mode == MODE_PVP and turn == PLAYER2)
+        if not game_over and human_turn:
+            draw_hover(screen, hover_col, turn)
         else:
             pygame.draw.rect(screen, BG_COLOR, (0, SCORE_H, WIDTH, HEADER_H))
 
         draw_board(screen, board, win_cells)
 
         if game_over:
-            if win_cells:
-                winner = board[win_cells[0][0]][win_cells[0][1]]
-            else:
-                winner = None
-            draw_victory(screen, winner, ai_mode, font_big, font_sm)
+            winner = board[win_cells[0][0]][win_cells[0][1]] if win_cells else None
+            draw_victory(screen, winner, mode, font_big, font_sm)
 
         pygame.display.flip()
 
