@@ -1,0 +1,13 @@
+scenario,algorithm,depth,repeats,avg_ms,avg_nodes,avg_cutoffs,best_col,best_score,speedup_vs_minimax,node_reduction_pct_vs_minimax
+Opening center,minimax,5,5,1670.3456,19608,0,3,9,,
+Opening center,alpha-beta,5,5,270.7399,3214,509,3,9,,
+Opening center,summary,5,5,,,,,,6.1696,83.6087
+Center fight,minimax,5,5,1642.4243,18934,0,2,17,,
+Center fight,alpha-beta,5,5,134.6905,1627,260,2,17,,
+Center fight,summary,5,5,,,,,,12.1941,91.4070
+Tactical mid,minimax,5,5,1604.4760,18296,0,2,23,,
+Tactical mid,alpha-beta,5,5,277.5133,3330,559,2,23,,
+Tactical mid,summary,5,5,,,,,,5.7816,81.7993
+Edge pressure,minimax,5,5,1643.2688,18779,0,3,14,,
+Edge pressure,alpha-beta,5,5,130.6938,1607,328,3,14,,
+Edge pressure,summary,5,5,,,,,,12.5734,91.4426

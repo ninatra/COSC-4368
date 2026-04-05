@@ -3,6 +3,10 @@ import pygame
 import sys
 import math
 import random
+import time
+import argparse
+import statistics
+import csv
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 BG_COLOR      = (13,  17,  38)
@@ -36,7 +40,7 @@ AI_DEPTH      = 5
 # ── Modes ───────────────────────────────────────────────────────────────────────
 MODE_PVP      = "pvp"
 MODE_MINIMAX  = "minimax"
-MODE_AB       = "alphabeta"
+MODE_AB       = "alpha-beta"
 
 
 # ── Board helpers ───────────────────────────────────────────────────────────────
@@ -79,7 +83,6 @@ def winning_move(board, piece):
             if all(board[r - i][c + i] == piece for i in range(4)):
                 return [(r - i, c + i) for i in range(4)]
     return None
-
 
 # ── AI scoring ──────────────────────────────────────────────────────────────────
 
@@ -130,10 +133,145 @@ def is_terminal_node(board):
             winning_move(board, PLAYER2) or
             len(get_valid_locations(board)) == 0)
 
+def board_from_moves(moves, first_player=PLAYER1):
+    board = create_board()
+    turn = first_player
+
+    for col in moves:
+        if not is_valid(board, col):
+            raise ValueError(f"Invalid move sequence: column {col} is not playable")
+        row = next_open_row(board, col)
+        drop_piece(board, row, col, turn)
+        turn = PLAYER1 if turn == PLAYER2 else PLAYER2
+
+    return board, turn
+
+def benchmark_algorithms(depth, repeats, csv_path=None):
+    scenarios = [
+        ("Opening center", [3]),
+        ("Center fight", [3, 3, 2, 4, 2]),
+        ("Tactical mid", [3, 2, 3, 2, 4, 1, 4]),
+        ("Edge pressure", [0, 1, 0, 1, 6, 5, 6]),
+    ]
+    csv_rows = []
+
+    print("\n=== Connect Four Search Benchmark ===")
+    print(f"depth={depth} repeats={repeats}\n")
+
+    header = (
+        f"{'Scenario':<16} {'Algorithm':<10} {'Avg ms':>10} {'Avg nodes':>12} "
+        f"{'Avg cutoffs':>12} {'Best col':>8} {'Best score':>10}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for name, moves in scenarios:
+        board, turn = board_from_moves(moves)
+        if turn != PLAYER2:
+            raise ValueError(f"Scenario '{name}' does not leave the AI to move")
+        if is_terminal_node(board):
+            raise ValueError(f"Scenario '{name}' is terminal and cannot be benchmarked")
+
+        results = {}
+        for algo in (MODE_MINIMAX, MODE_AB):
+            times = []
+            nodes = []
+            cutoffs = []
+            chosen_col = None
+            chosen_score = None
+
+            for _ in range(repeats):
+                stats = {"nodes": 0, "cutoffs": 0}
+                started_at = time.perf_counter()
+
+                if algo == MODE_MINIMAX:
+                    col, score = minimax(board.copy(), depth, True, stats)
+                else:
+                    col, score = minimax_ab(board.copy(), depth, -math.inf, math.inf, True, stats)
+
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
+                times.append(elapsed_ms)
+                nodes.append(stats["nodes"])
+                cutoffs.append(stats["cutoffs"])
+                chosen_col = col
+                chosen_score = score
+
+            results[algo] = {
+                "avg_time": statistics.mean(times),
+                "avg_nodes": statistics.mean(nodes),
+                "avg_cutoffs": statistics.mean(cutoffs),
+                "col": chosen_col,
+                "score": chosen_score,
+            }
+
+        for algo in (MODE_MINIMAX, MODE_AB):
+            row = results[algo]
+            print(
+                f"{name:<16} {algo:<10} {row['avg_time']:>10.2f} {row['avg_nodes']:>12.0f} "
+                f"{row['avg_cutoffs']:>12.0f} {str(row['col']):>8} {row['score']:>10}"
+            )
+            csv_rows.append({
+                "scenario": name,
+                "algorithm": algo,
+                "depth": depth,
+                "repeats": repeats,
+                "avg_ms": f"{row['avg_time']:.4f}",
+                "avg_nodes": f"{row['avg_nodes']:.0f}",
+                "avg_cutoffs": f"{row['avg_cutoffs']:.0f}",
+                "best_col": row["col"],
+                "best_score": row["score"],
+                "speedup_vs_minimax": "",
+                "node_reduction_pct_vs_minimax": "",
+            })
+
+        mm = results[MODE_MINIMAX]
+        ab = results[MODE_AB]
+        speedup = mm["avg_time"] / ab["avg_time"] if ab["avg_time"] > 0 else float("inf")
+        node_reduction = (1 - (ab["avg_nodes"] / mm["avg_nodes"])) * 100 if mm["avg_nodes"] > 0 else 0
+        print(f"{'':<16} {'speedup':<10} {speedup:>10.2f}x {'node reduction':>12} {node_reduction:>8.2f}%")
+        csv_rows.append({
+            "scenario": name,
+            "algorithm": "summary",
+            "depth": depth,
+            "repeats": repeats,
+            "avg_ms": "",
+            "avg_nodes": "",
+            "avg_cutoffs": "",
+            "best_col": "",
+            "best_score": "",
+            "speedup_vs_minimax": f"{speedup:.4f}",
+            "node_reduction_pct_vs_minimax": f"{node_reduction:.4f}",
+        })
+        print()
+
+    if csv_path:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "scenario",
+                    "algorithm",
+                    "depth",
+                    "repeats",
+                    "avg_ms",
+                    "avg_nodes",
+                    "avg_cutoffs",
+                    "best_col",
+                    "best_score",
+                    "speedup_vs_minimax",
+                    "node_reduction_pct_vs_minimax",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(csv_rows)
+        print(f"CSV written to: {csv_path}")
 
 # ── Minimax (no pruning) ────────────────────────────────────────────────────────
 
-def minimax(board, depth, maximizing):
+def minimax(board, depth, maximizing, stats=None):
+    if stats is not None:
+        stats["nodes"] += 1
+
     valid    = get_valid_locations(board)
     terminal = is_terminal_node(board)
 
@@ -154,7 +292,7 @@ def minimax(board, depth, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER2)
-            new_score = minimax(b_copy, depth - 1, False)[1]
+            new_score = minimax(b_copy, depth - 1, False, stats)[1]
             if new_score > value:
                 value  = new_score
                 column = col
@@ -166,16 +304,18 @@ def minimax(board, depth, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER1)
-            new_score = minimax(b_copy, depth - 1, True)[1]
+            new_score = minimax(b_copy, depth - 1, True, stats)[1]
             if new_score < value:
                 value  = new_score
                 column = col
         return column, value
 
-
 # ── Minimax with alpha-beta pruning ─────────────────────────────────────────────
 
-def minimax_ab(board, depth, alpha, beta, maximizing):
+def minimax_ab(board, depth, alpha, beta, maximizing, stats=None):
+    if stats is not None:
+        stats["nodes"] += 1
+
     valid    = get_valid_locations(board)
     terminal = is_terminal_node(board)
 
@@ -196,12 +336,14 @@ def minimax_ab(board, depth, alpha, beta, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER2)
-            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, False)[1]
+            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, False, stats)[1]
             if new_score > value:
                 value  = new_score
                 column = col
             alpha = max(alpha, value)
             if alpha >= beta:
+                if stats is not None:
+                    stats["cutoffs"] += 1
                 break
         return column, value
     else:
@@ -211,15 +353,16 @@ def minimax_ab(board, depth, alpha, beta, maximizing):
             row    = next_open_row(board, col)
             b_copy = board.copy()
             drop_piece(b_copy, row, col, PLAYER1)
-            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, True)[1]
+            new_score = minimax_ab(b_copy, depth - 1, alpha, beta, True, stats)[1]
             if new_score < value:
                 value  = new_score
                 column = col
             beta = min(beta, value)
             if alpha >= beta:
+                if stats is not None:
+                    stats["cutoffs"] += 1
                 break
         return column, value
-
 
 # ── Color helpers ───────────────────────────────────────────────────────────────
 
@@ -228,7 +371,6 @@ def lighten(color, amount):
 
 def darken(color, amount):
     return tuple(max(0, c - amount) for c in color)
-
 
 # ── Drawing ─────────────────────────────────────────────────────────────────────
 
@@ -339,7 +481,7 @@ def draw_menu(surface, font_big, font_sm):
 
     for rect, label in [
         (pvp_rect, "2 Players"),
-        (mm_rect,  "AI  —  Minimax"),
+        (mm_rect,  "AI —  Minimax"),
         (ab_rect,  "AI - Minimax + Alpha-Beta"),
     ]:
         pygame.draw.rect(surface, BOARD_COLOR, rect, border_radius=10)
@@ -395,10 +537,20 @@ def main():
 
         # ── AI move ─────────────────────────────────────────────────────────────
         if mode != MODE_PVP and turn == PLAYER2 and not game_over:
+            metrics = {"nodes": 0, "cutoffs": 0}
+            started_at = time.perf_counter()
+
             if mode == MODE_MINIMAX:
-                col, _ = minimax(board, AI_DEPTH, True)
+                col, score = minimax(board, AI_DEPTH, True, metrics)
             else:
-                col, _ = minimax_ab(board, AI_DEPTH, -math.inf, math.inf, True)
+                col, score = minimax_ab(board, AI_DEPTH, -math.inf, math.inf, True, metrics)
+
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            print(
+                f"[AI:{mode}] depth={AI_DEPTH} col={col} score={score} "
+                f"nodes={metrics['nodes']} cutoffs={metrics['cutoffs']} "
+                f"time_ms={elapsed_ms:.2f}"
+            )
 
             if col is not None and is_valid(board, col):
                 row = next_open_row(board, col)
@@ -466,4 +618,20 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Connect Four")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="Run minimax vs alpha-beta benchmark and exit")
+    parser.add_argument("--depth", type=int, default=AI_DEPTH,
+                        help="Search depth for game and benchmark")
+    parser.add_argument("--repeats", type=int, default=5,
+                        help="Benchmark repetitions per scenario and algorithm")
+    parser.add_argument("--csv", type=str, default="fixed_scenarios_benchmark.csv",
+                        help="Output path for benchmark CSV")
+    args = parser.parse_args()
+
+    AI_DEPTH = args.depth
+
+    if args.benchmark:
+        benchmark_algorithms(depth=args.depth, repeats=args.repeats, csv_path=args.csv)
+    else:
+        main()
